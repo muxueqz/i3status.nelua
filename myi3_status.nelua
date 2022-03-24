@@ -1,7 +1,8 @@
 require 'io'
 require 'os'
 require 'hashmap'
--- import json
+require 'battery'
+
 local DEFAULT_PROCPATH = '/proc'
 
 local head = [[{"version":1,"click_events":true,"stop_signal":0,"cont_signal":0}
@@ -9,9 +10,6 @@ local head = [[{"version":1,"click_events":true,"stop_signal":0,"cont_signal":0}
 print(head)
 os.sleep(1)
 
--- function ipc_query(req="command", msg="")
---     ans = popen("i3-msg -t " + req + " " +  msg).readlines()[0]
---     return json.loads(ans)
 local function sum(...: varargs)
   local s: integer
   for i, v in ipairs(...) do -- iterate over all arguments
@@ -59,60 +57,59 @@ local function get_mem_usage()
     return percentage_used
 end
 
--- def get_width():
---     for w in ipc_query(req="get_workspaces"):
---         if w['focused']:
---             return (w['rect']['width'])
-
-local function get_spacer()
-    -- local width = get_width()
-  -- local text: stringbuilder
-  -- for i = 1, 110, 1 do
-  --   -- text:write(i)
-  --   text:write(1)
-  -- end
-  return string.format(
-    [[{"full_text": "%s", "name" : "spacer"}]],
-    -- text)
-    string.rep(' ', 110))
-end
-
-local spacer = get_spacer()
-
 local function get_status()
-  local cpu = string.format(
-    '{"full_text": " cpu %02d%% ", "name" : "cpu"}',
-    get_cpu_usage())
-  local memory = string.format(
-    '{"full_text": " mem %02d%% ", "name" : "mem"}',
-    get_mem_usage())
-  local module_center = string.format(
-    [[{"full_text": "%s", "name" : "datetime",
-    "align":"center", "min_width":2160}]],
-    os.date('%Y-%m-%d %a %H:%M:%S'))
-  -- local status:[]string = {
-  --      -- datetime,
-  --      -- spacer,
-  --      -- cpu,
-  --      memory,
-  --   }
-  -- local status = string.format(
-  --   '%s,\n', memory)
+  local dev = "CMB0"
+  local devpath = '/sys/class/power_supply/' .. dev
   local status: stringbuilder
-  status:write('[')
 
-  status:write(module_center, ',')
-  -- status:write(spacer, ',')
-  status:write(cpu, ',')
-  status:write(memory)
+  local status_array: sequence(string)
+  local status_item: string
+  
+  local count = 5
+  while true do
+    local item_num = 0
 
-  status:write('],\n')
-    return status
-end
+    status_item = string.format(
+      [[{"full_text": "%s", "name" : "datetime",
+      "align":"center", "min_width":2160}]],
+      os.date('%Y-%m-%d %a %H:%M:%S'))
+    item_num = item_num + 1
+    status_array[item_num] = status_item
 
-while true do
-    local status = get_status()
+    if count >= 5 then
+      status_item = string.format(
+        '{"full_text": " cpu %02d%% ", "name" : "cpu"}',
+        get_cpu_usage())
+      item_num = item_num + 1
+      status_array[item_num] = status_item
+      status_item = string.format(
+        '{"full_text": " mem %02d%% ", "name" : "mem"}',
+        get_mem_usage())
+      item_num = item_num + 1
+      status_array[item_num] = status_item
+
+      status_item = string.format(
+        '{"full_text": " %s ", "name" : "battery"}',
+        get_battery_info(devpath, false)
+      )
+      item_num = item_num + 1
+      status_array[item_num] = status_item
+      count = 0
+    end
+
+    status:write('[')
+
+    for i = 1, #status_array - 1 do
+      status:write(status_array[i], ',')
+    end
+    status:write(status_array[#status_array])
+
+    status:write('],\n')
     io.stdout:write(status)
     io.stdout:flush()
     os.sleep(1)
+    count = count + 1
+  end
 end
+
+local status = get_status()
