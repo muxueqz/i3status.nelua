@@ -1,0 +1,101 @@
+--[[
+  Copyright (C) 2015-2020  luastatus developers
+
+  This file is part of luastatus.
+
+  luastatus is free software: you can redistribute it and/or modify
+  it under the terms of the GNU Lesser General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  luastatus is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU Lesser General Public License for more details.
+
+  You should have received a copy of the GNU Lesser General Public License
+  along with luastatus.  If not, see <https://www.gnu.org/licenses/>.
+--]]
+require 'math'
+require 'io'
+require 'hashmap'
+require 'errorhandling'
+
+local status_map:[2]string = {"↑", "↓"}
+local Statuses = @enum{
+  Charging = 0,
+  Discharging,
+  Notcharging
+}
+
+global function get_battery_info(devpath: string, use_energy_full_design: boolean)
+  local function get_battery_info_real(devpath: string, use_energy_full_design: boolean)
+    local f, _, err = io.open(devpath .. '/uevent', 'r')
+    if err ~= 0 then
+      return ""
+    end
+    local p: hashmap(string, string)
+    for line in f:lines() do
+        local s, matches = line:match('POWER_SUPPLY_(.-)=(.*)')
+        local key, value = matches[1], matches[2]
+        if key then
+            p[key:lower()] = value
+        end
+    end
+    f:close()
+
+    local energy_full, energy_now, power_now: integer
+
+    energy_full = tonumber(p['energy_full'])
+    energy_now = tonumber(p['energy_now'])
+    power_now = tonumber(p['power_now'])
+    -- Convert amperes to watts.
+    if string.find(p['charge_full'], '%d+') > 0 then
+        energy_full = tonumber(p['charge_full']) * tonumber(p['voltage_now']) / 1e6
+        energy_now = tonumber(p['charge_now']) * tonumber(p['voltage_now']) / 1e6
+        -- Some drivers don't report current_now
+        if string.len(p['current_now']) > 0 then
+          power_now = tonumber(p['current_now']) * tonumber(p['voltage_now']) / 1e6
+        end
+    end
+
+    local status = p['status']
+    -- local result = @record{status:string, capacity: integer}
+    -- local r: result = {status:p['status']}
+
+    local ef = energy_full
+    if use_energy_full_design then
+      ef = tonumber(p['energy_full_design'])
+    end
+    -- A buggy driver can report energy_now as energy_full_design, which
+    -- will lead to an overshoot in capacity.
+    local capacity = math.min(math.floor(energy_now / ef * 100 + 0.5), 100)
+    local consumption, rem_time: float32
+    local flag: string
+
+    if power_now ~= nil and power_now ~= 0 then
+        consumption = power_now / 1e6
+        if status == 'Charging' then
+            rem_time = (energy_full - energy_now) / power_now
+            flag = status_map[Statuses.Charging]
+        elseif status == 'Discharging' or status == 'Not charging' then
+            rem_time = energy_now / power_now
+            flag = status_map[Statuses.Discharging]
+        end
+    end
+
+    return (string.format("%s %d%%:%dH",
+      flag,
+      capacity,
+      rem_time
+      -- consumption
+  ))
+  end
+
+  local ok, err, ret = pcall(get_battery_info_real, devpath, false)
+  if ok then
+    return ret
+  else
+    return "battery: unknown"
+  end
+end
