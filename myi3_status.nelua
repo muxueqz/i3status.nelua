@@ -2,6 +2,8 @@ require 'io'
 require 'os'
 require 'hashmap'
 require 'battery'
+require 'json'
+require 'vector'
 
 local DEFAULT_PROCPATH = '/proc'
 
@@ -9,6 +11,36 @@ local head = [[{"version":1,"click_events":true,"stop_signal":0,"cont_signal":0}
 []]
 print(head)
 os.sleep(1)
+
+local Output = @record{
+  name: string,
+  active: boolean,
+  primary: boolean,
+  -- rect: record{
+  --   height: number,
+  --   width: number,
+  -- },
+  rect: hashmap(string, integer),
+  -- rect: rect,
+}
+
+local function get_width(): integer
+  local fd = io.popen('i3-msg -t get_outputs')
+  local r = fd:read()
+  local outputs = json.parse(r, @sequence(Output))
+  for i = 0, #outputs, 1 do
+    local v = outputs[i]
+    if v.primary == true then
+      return v.rect["width"]
+    end
+  end
+  return 0
+end
+
+local module_count = 3.0
+local primary_width = get_width()
+local min_width = primary_width - primary_width * 0.10 * module_count
+-- local min_width = get_width() * 0.85
 
 local function sum(...: varargs)
   local s: integer
@@ -71,8 +103,10 @@ local function get_status()
 
     status_item = string.format(
       [[{"full_text": "%s", "name" : "datetime",
-      "align":"center", "min_width":2160}]],
-      os.date('%Y-%m-%d %a %H:%M:%S'))
+      "align":"center", "min_width": %d}]],
+      -- "align":"center", "min_width":1330}]],
+      -- "align":"center", "min_width":2160}]],
+      os.date('%Y-%m-%d %a %H:%M:%S'), min_width)
     item_num = item_num + 1
     status_array[item_num] = status_item
 
